@@ -380,7 +380,8 @@ Test coverage includes:
 - **Environment Variables**: Sensitive data stored securely
 - **Input Validation**: Request data validation
 
-📖 **See [SECURITY_FEATURES.md](SECURITY_FEATURES.md) for detailed security documentation**
+📖 **See [SECURITY_FEATURES.md](SECURITY_FEATURES.md) for detailed security documentation**  
+📖 **See [WEBHOOK_HANDLING.md](WEBHOOK_HANDLING.md) for webhook processing guide**
 
 ## Mock Integrations
 

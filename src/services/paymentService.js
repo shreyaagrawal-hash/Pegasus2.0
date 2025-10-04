@@ -277,17 +277,35 @@ const handlePaymentWebhook = async (webhookData, securityContext = {}, idempoten
   };
 
   try {
-    logger.info('Processing payment webhook', {
+    // Stage 1: RECEIVED
+    logger.info('🔔 Webhook RECEIVED', {
+      stage: 'RECEIVED',
       ...context,
       timestamp: new Date().toISOString(),
+    });
+
+    // Stage 2: VALIDATING
+    logger.info('🔒 Webhook VALIDATING signature', {
+      stage: 'VALIDATING',
+      ...context,
     });
 
     // Verify signature with security context
     verifyPaytmSignature(webhookData, CHECKSUMHASH, securityContext);
 
-    logger.info('Webhook signature verified successfully', {
+    // Stage 2: VALIDATED
+    logger.info('✅ Webhook VALIDATED successfully', {
+      stage: 'VALIDATED',
       ...context,
-      verificationStage: 'completed',
+      checksumVerified: true,
+    });
+
+    // Stage 3: APPLYING updates
+    logger.info('⚙️ Webhook APPLYING payment status update', {
+      stage: 'APPLYING',
+      ...context,
+      previousStatus: 'PENDING',
+      newStatus: STATUS === 'TXN_SUCCESS' ? 'SUCCESS' : 'FAILED',
     });
 
     // Update payment status
@@ -301,19 +319,28 @@ const handlePaymentWebhook = async (webhookData, securityContext = {}, idempoten
 
     const processingTime = Date.now() - startTime;
 
-    const result = {
-      success: true,
-      orderId: ORDERID,
-      status: updateResult.status,
-      message: 'Webhook processed successfully',
-      processingTimeMs: processingTime,
-    };
-
-    logger.info('Payment webhook processed successfully', {
+    // Stage 4: APPLIED
+    logger.info('✅ Webhook APPLIED successfully', {
+      stage: 'APPLIED',
       ...context,
       finalStatus: updateResult.status,
       processingTimeMs: processingTime,
+      stages: ['RECEIVED', 'VALIDATED', 'APPLIED'],
     });
+
+    const result = {
+      success: true,
+      orderId: ORDERID,
+      transactionId: TXNID,
+      status: updateResult.status,
+      message: 'Webhook processed successfully',
+      processingTimeMs: processingTime,
+      stages: {
+        received: true,
+        validated: true,
+        applied: true,
+      },
+    };
 
     return result;
   } catch (error) {

@@ -208,18 +208,33 @@ router.post('/webhook', async (req, res) => {
     // Send SMS notification for payment status
     try {
       const payment = await paymentService.getPaymentById(result.orderId);
-      await notificationService.sendPaymentNotification({
+      
+      logger.info('📱 Sending SMS notification for payment', {
+        orderId: payment.orderId,
+        status: payment.status,
+        mobile: payment.mobile,
+      });
+
+      const smsResult = await notificationService.sendPaymentNotification({
         mobile: payment.mobile,
         orderId: payment.orderId,
         amount: payment.amount,
         status: payment.status,
       });
+
+      logger.info('✅ SMS notification sent successfully', {
+        orderId: payment.orderId,
+        notificationId: smsResult.notificationId,
+        smsId: smsResult.smsId,
+      });
+
     } catch (smsError) {
-      logger.error('Failed to send payment notification', {
+      logger.error('❌ Failed to send payment notification', {
         orderId: result.orderId,
         error: smsError.message,
+        errorType: smsError.name,
       });
-      // Don't fail the webhook if SMS fails
+      // Don't fail the webhook if SMS fails - payment is already processed
     }
     
     res.status(200).json({
