@@ -8,14 +8,19 @@ const notificationService = require('../services/notificationService');
 const crypto = require('crypto');
 const config = require('../config/config');
 const idempotencyStore = require('../utils/idempotencyStore');
+const rewire = require('rewire');
 
 jest.mock('../services/paymentService');
 jest.mock('../services/notificationService');
+
+const paymentServiceRewired = rewire('../services/paymentService');
+const payments = paymentServiceRewired.__get__('payments');
 
 describe('Payment Routes', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         idempotencyStore.clear();
+        payments.clear();
     });
 
     it('should create a payment', async () => {

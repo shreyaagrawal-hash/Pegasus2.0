@@ -5,13 +5,32 @@ const { SignatureMismatchError } = require('../utils/errors');
 const notificationService = require('./notificationService');
 const idempotencyStore = require('../utils/idempotencyStore');
 
+const payments = new Map();
+
 const createPayment = async (paymentDetails) => {
-  // Mock implementation
-  return {
-    success: true,
-    paymentId: `PAYMENT_${Date.now()}`,
-    ...paymentDetails,
-  };
+  logger.info('Creating payment', { details: paymentDetails });
+  try {
+    const paymentId = `PAYMENT_${Date.now()}`;
+    const newPayment = {
+      paymentId,
+      status: 'PENDING',
+      ...paymentDetails,
+      createdAt: new Date(),
+    };
+    payments.set(paymentId, newPayment);
+    logger.info('Payment created successfully', { paymentId });
+    // In a real scenario, you would get a transaction token or redirect URL from Paytm
+    return {
+      success: true,
+      paymentId,
+      // Mock transaction token
+      token: `TXN_TOKEN_${paymentId}`,
+    };
+  } catch (error) {
+    logger.error('Failed to create payment', { error });
+    // In a real app, you might want specific error types
+    throw new Error('Payment creation failed');
+  }
 };
 
 const verifyPaytmSignature = async (payload, signature) => {
@@ -75,13 +94,14 @@ const updatePaymentStatus = async (paymentId, status) => {
 };
 
 const getPaymentById = async (paymentId) => {
-  // Mock implementation
-  return {
-    paymentId,
-    amount: 100,
-    currency: 'INR',
-    status: 'SUCCESS',
-  };
+  logger.info('Fetching payment by ID', { paymentId });
+  const payment = payments.get(paymentId);
+  if (!payment) {
+    logger.warn('Payment not found', { paymentId });
+    return null;
+  }
+  logger.info('Payment found', { paymentId });
+  return payment;
 };
 
 const paymentService = {
