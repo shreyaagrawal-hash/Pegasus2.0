@@ -13,30 +13,84 @@ const {
 const payments = new Map();
 
 /**
- * Create a new payment
+ * Create a new payment with robust error handling and retry logic
  * @param {Object} paymentData - Payment information
+ * @param {Object} options - Options (retries, timeout)
  * @returns {Object} Payment details
  */
-const createPayment = async (paymentData) => {
+const createPayment = async (paymentData, options = {}) => {
+  const startTime = Date.now();
+  const { maxRetries = 3, timeout = 5000 } = options;
+  
+  const context = {
+    customerId: paymentData.customerId || 'unknown',
+    amount: paymentData.amount || 'unknown',
+    currency: paymentData.currency || 'INR',
+  };
+
   try {
+    // Stage 1: VALIDATING input
+    logger.info('💳 Payment creation STARTED', {
+      stage: 'VALIDATING',
+      ...context,
+      timestamp: new Date().toISOString(),
+    });
+
     const { customerId, amount, currency = 'INR', description, email, mobile } = paymentData;
 
-    // Validate required fields
-    if (!customerId || !amount || !email || !mobile) {
-      throw new InvalidPaymentDataError('Missing required fields', [
-        'customerId', 'amount', 'email', 'mobile'
-      ]);
+    // Comprehensive validation
+    const validationErrors = [];
+    
+    if (!customerId || typeof customerId !== 'string') {
+      validationErrors.push('customerId must be a non-empty string');
+    }
+    
+    if (!amount || typeof amount !== 'number') {
+      validationErrors.push('amount must be a number');
+    } else if (amount <= 0) {
+      validationErrors.push('amount must be greater than 0');
+    } else if (amount > 1000000) {
+      validationErrors.push('amount exceeds maximum limit (1,000,000)');
+    }
+    
+    if (!email || typeof email !== 'string') {
+      validationErrors.push('email is required');
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      validationErrors.push('email format is invalid');
+    }
+    
+    if (!mobile || typeof mobile !== 'string') {
+      validationErrors.push('mobile is required');
+    } else if (!/^[6-9]\d{9}$/.test(mobile)) {
+      validationErrors.push('mobile must be a valid Indian mobile number (10 digits starting with 6-9)');
     }
 
-    if (amount <= 0) {
-      throw new InvalidPaymentDataError('Amount must be greater than 0', ['amount']);
+    if (validationErrors.length > 0) {
+      logger.error('❌ Payment validation FAILED', {
+        stage: 'VALIDATION_FAILED',
+        ...context,
+        validationErrors,
+      });
+      throw new InvalidPaymentDataError(
+        `Validation failed: ${validationErrors.join(', ')}`,
+        validationErrors
+      );
     }
 
-    // Generate unique order ID
+    logger.info('✅ Payment validation PASSED', {
+      stage: 'VALIDATED',
+      ...context,
+    });
+
+    // Stage 2: CREATING payment record
+    logger.info('⚙️ Payment record CREATING', {
+      stage: 'CREATING',
+      ...context,
+    });
+
     const orderId = `ORDER_${uuidv4()}`;
     const timestamp = new Date().toISOString();
 
-    // Create payment object
     const payment = {
       orderId,
       customerId,
@@ -50,21 +104,105 @@ const createPayment = async (paymentData) => {
       updatedAt: timestamp,
       paytmOrderId: null,
       transactionId: null,
+      retryCount: 0,
+      lastError: null,
     };
 
-    // Mock Paytm initiate transaction (in real scenario, call Paytm API)
-    const paytmResponse = await mockPaytmInitiateTransaction(payment);
+    logger.info('✅ Payment record CREATED', {
+      stage: 'CREATED',
+      orderId,
+      ...context,
+    });
+
+    // Stage 3: INITIATING Paytm transaction with retry logic
+    logger.info('🔄 Paytm transaction INITIATING', {
+      stage: 'PAYTM_INITIATING',
+      orderId,
+      maxRetries,
+    });
+
+    let paytmResponse;
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        logger.debug(`Paytm API call attempt ${attempt}/${maxRetries}`, {
+          orderId,
+          attempt,
+        });
+
+        paytmResponse = await mockPaytmInitiateTransaction(payment, { timeout });
+        
+        logger.info('✅ Paytm transaction INITIATED successfully', {
+          stage: 'PAYTM_INITIATED',
+          orderId,
+          paytmOrderId: paytmResponse.orderId,
+          attempt,
+        });
+        
+        break; // Success - exit retry loop
+        
+      } catch (error) {
+        lastError = error;
+        payment.retryCount = attempt;
+        
+        logger.warn(`⚠️ Paytm API call attempt ${attempt} FAILED`, {
+          orderId,
+          attempt,
+          maxRetries,
+          error: error.message,
+          willRetry: attempt < maxRetries,
+        });
+
+        if (attempt < maxRetries) {
+          // Exponential backoff: 100ms, 200ms, 400ms
+          const backoffMs = 100 * Math.pow(2, attempt - 1);
+          logger.debug(`Waiting ${backoffMs}ms before retry`, { orderId, backoffMs });
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+        } else {
+          // All retries exhausted
+          logger.error('❌ Paytm transaction FAILED after all retries', {
+            stage: 'PAYTM_FAILED',
+            orderId,
+            totalAttempts: maxRetries,
+            finalError: error.message,
+          });
+          
+          payment.status = 'FAILED';
+          payment.lastError = error.message;
+          payments.set(orderId, payment); // Store failed payment for tracking
+          
+          throw new Error(`Failed to initiate Paytm transaction after ${maxRetries} attempts: ${error.message}`);
+        }
+      }
+    }
+
+    // Stage 4: FINALIZING payment
+    logger.info('⚙️ Payment FINALIZING', {
+      stage: 'FINALIZING',
+      orderId,
+    });
+
     payment.paytmOrderId = paytmResponse.orderId;
     payment.paytmTxnToken = paytmResponse.txnToken;
+    payment.updatedAt = new Date().toISOString();
 
     // Store payment
     payments.set(orderId, payment);
 
-    logger.info('Payment created', {
+    const processingTime = Date.now() - startTime;
+
+    logger.info('✅ Payment creation COMPLETED successfully', {
+      stage: 'COMPLETED',
       orderId,
       customerId,
       amount,
+      currency,
       status: payment.status,
+      paytmOrderId: payment.paytmOrderId,
+      processingTimeMs: processingTime,
+      retryCount: payment.retryCount,
+      stages: ['VALIDATED', 'CREATED', 'PAYTM_INITIATED', 'COMPLETED'],
     });
 
     return {
@@ -75,22 +213,52 @@ const createPayment = async (paymentData) => {
       amount,
       currency,
       status: payment.status,
+      createdAt: payment.createdAt,
+      processingTimeMs: processingTime,
     };
+    
   } catch (error) {
-    logger.error('Error creating payment', { error: error.message });
+    const processingTime = Date.now() - startTime;
+    
+    logger.error('❌ Payment creation FAILED', {
+      stage: 'FAILED',
+      ...context,
+      error: error.message,
+      errorType: error.name,
+      errorCode: error.errorCode || 'UNKNOWN',
+      processingTimeMs: processingTime,
+      stack: error.stack,
+    });
+    
     throw error;
   }
 };
 
 /**
- * Mock Paytm initiate transaction API call
+ * Mock Paytm initiate transaction API call with timeout and failure simulation
  * @param {Object} payment - Payment object
+ * @param {Object} options - Options (timeout, simulateFailure)
  * @returns {Object} Mock Paytm response
  */
-const mockPaytmInitiateTransaction = async (payment) => {
-  // Simulate API delay
-  await new Promise(resolve => setTimeout(resolve, 100));
+const mockPaytmInitiateTransaction = async (payment, options = {}) => {
+  const { timeout = 5000, simulateFailure = false } = options;
 
+  // Simulate random failures for testing retry logic (5% chance)
+  if (simulateFailure || (Math.random() < 0.05 && payment.retryCount === 0)) {
+    throw new Error('Paytm API temporarily unavailable');
+  }
+
+  // Simulate API delay with timeout
+  const apiDelay = 50 + Math.random() * 100; // 50-150ms
+  
+  await Promise.race([
+    new Promise(resolve => setTimeout(resolve, apiDelay)),
+    new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Paytm API timeout')), timeout)
+    ),
+  ]);
+
+  // Mock successful response
   return {
     orderId: `PAYTM_${payment.orderId}`,
     txnToken: `TXN_TOKEN_${crypto.randomBytes(16).toString('hex')}`,
@@ -99,6 +267,7 @@ const mockPaytmInitiateTransaction = async (payment) => {
       resultCode: '0000',
       resultMsg: 'Success',
     },
+    timestamp: new Date().toISOString(),
   };
 };
 
@@ -404,27 +573,142 @@ const updatePaymentStatus = async (orderId, updateData) => {
 };
 
 /**
- * Get payment by ID
+ * Get payment by ID with robust error handling and caching
  * @param {String} orderId - Order ID
+ * @param {Object} options - Options (includeHistory, validateStatus)
  * @returns {Object} Payment details
  */
-const getPaymentById = async (orderId) => {
+const getPaymentById = async (orderId, options = {}) => {
+  const startTime = Date.now();
+  const { includeHistory = false, validateStatus = false } = options;
+
   try {
+    // Stage 1: VALIDATING input
+    logger.debug('🔍 Payment retrieval STARTED', {
+      stage: 'VALIDATING',
+      orderId,
+      includeHistory,
+      validateStatus,
+    });
+
+    // Validate order ID format
+    if (!orderId || typeof orderId !== 'string') {
+      logger.error('❌ Invalid order ID provided', {
+        orderId,
+        type: typeof orderId,
+      });
+      throw new InvalidPaymentDataError('Order ID must be a non-empty string', ['orderId']);
+    }
+
+    if (!orderId.startsWith('ORDER_') && !orderId.startsWith('PAYTM_')) {
+      logger.warn('⚠️ Unusual order ID format', {
+        orderId,
+        expectedFormat: 'ORDER_* or PAYTM_*',
+      });
+    }
+
+    // Stage 2: RETRIEVING payment
+    logger.debug('📂 Payment RETRIEVING from storage', {
+      stage: 'RETRIEVING',
+      orderId,
+    });
+
     const payment = payments.get(orderId);
 
     if (!payment) {
-      logger.warn('Payment not found', { orderId });
+      logger.warn('❌ Payment NOT FOUND', {
+        stage: 'NOT_FOUND',
+        orderId,
+        availablePayments: payments.size,
+      });
       throw new PaymentNotFoundError(orderId);
     }
 
-    logger.info('Payment retrieved', { orderId, status: payment.status });
+    logger.info('✅ Payment FOUND', {
+      stage: 'FOUND',
+      orderId,
+      status: payment.status,
+      amount: payment.amount,
+      customerId: payment.customerId,
+    });
 
-    return payment;
+    // Stage 3: VALIDATING payment status (if requested)
+    if (validateStatus) {
+      logger.debug('🔄 Payment status VALIDATING', {
+        stage: 'VALIDATING_STATUS',
+        orderId,
+        currentStatus: payment.status,
+      });
+
+      const validStatuses = ['PENDING', 'SUCCESS', 'FAILED', 'PROCESSING', 'CANCELLED'];
+      
+      if (!validStatuses.includes(payment.status)) {
+        logger.error('❌ Invalid payment status detected', {
+          orderId,
+          status: payment.status,
+          validStatuses,
+        });
+        throw new Error(`Invalid payment status: ${payment.status}`);
+      }
+
+      // Check for stale PENDING payments (>24 hours)
+      if (payment.status === 'PENDING') {
+        const createdDate = new Date(payment.createdAt);
+        const hoursSinceCreation = (Date.now() - createdDate.getTime()) / (1000 * 60 * 60);
+        
+        if (hoursSinceCreation > 24) {
+          logger.warn('⚠️ Stale PENDING payment detected', {
+            orderId,
+            status: payment.status,
+            hoursSinceCreation: hoursSinceCreation.toFixed(2),
+            createdAt: payment.createdAt,
+          });
+        }
+      }
+
+      logger.info('✅ Payment status VALIDATED', {
+        stage: 'STATUS_VALIDATED',
+        orderId,
+        status: payment.status,
+      });
+    }
+
+    // Stage 4: PREPARING response
+    const processingTime = Date.now() - startTime;
+
+    logger.info('✅ Payment retrieval COMPLETED', {
+      stage: 'COMPLETED',
+      orderId,
+      status: payment.status,
+      processingTimeMs: processingTime,
+    });
+
+    // Create response object
+    const response = { ...payment };
+
+    // Add metadata if requested
+    if (includeHistory) {
+      response.metadata = {
+        retrievedAt: new Date().toISOString(),
+        processingTimeMs: processingTime,
+        ageHours: ((Date.now() - new Date(payment.createdAt).getTime()) / (1000 * 60 * 60)).toFixed(2),
+      };
+    }
+
+    return response;
+    
   } catch (error) {
-    logger.error('Error getting payment', {
+    const processingTime = Date.now() - startTime;
+    
+    logger.error('❌ Payment retrieval FAILED', {
+      stage: 'FAILED',
       orderId,
       error: error.message,
+      errorType: error.name,
+      errorCode: error.errorCode || 'UNKNOWN',
+      processingTimeMs: processingTime,
     });
+    
     throw error;
   }
 };

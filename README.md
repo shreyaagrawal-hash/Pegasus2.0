@@ -381,7 +381,8 @@ Test coverage includes:
 - **Input Validation**: Request data validation
 
 📖 **See [SECURITY_FEATURES.md](SECURITY_FEATURES.md) for detailed security documentation**  
-📖 **See [WEBHOOK_HANDLING.md](WEBHOOK_HANDLING.md) for webhook processing guide**
+📖 **See [WEBHOOK_HANDLING.md](WEBHOOK_HANDLING.md) for webhook processing guide**  
+📖 **See [PAYMENT_FLOW_DOCUMENTATION.md](PAYMENT_FLOW_DOCUMENTATION.md) for payment creation & retrieval**
 
 ## Mock Integrations
 
