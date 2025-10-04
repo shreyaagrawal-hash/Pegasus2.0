@@ -1,4 +1,6 @@
 const paymentService = require('../services/paymentService');
+const { SignatureMismatchError } = require('../utils/errors');
+const logger = require('../utils/logger');
 
 const createPayment = async (req, res) => {
   try {
@@ -10,17 +12,21 @@ const createPayment = async (req, res) => {
 };
 
 const handleWebhook = async (req, res) => {
+  const signature = req.headers['x-paytm-signature'];
+  const idempotencyKey = req.headers['idempotency-key'] || req.body.idempotencyKey;
+
+  logger.info('Processing webhook', { idempotencyKey });
+
   try {
-    // Assuming signature is in headers
-    const signature = req.headers['x-paytm-signature'];
     const isValid = await paymentService.verifyPaytmSignature(req.body, signature);
     if (isValid) {
       await paymentService.handlePaymentWebhook(req.body);
       res.status(200).send({ status: 'OK' });
-    } else {
-      res.status(400).send({ error: 'Invalid signature' });
     }
   } catch (error) {
+    if (error instanceof SignatureMismatchError) {
+      return res.status(error.statusCode).send({ error: error.message });
+    }
     res.status(500).send({ error: 'Webhook processing failed' });
   }
 };

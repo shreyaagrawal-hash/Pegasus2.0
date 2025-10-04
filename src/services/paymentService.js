@@ -1,3 +1,8 @@
+const crypto = require('crypto');
+const config = require('../config/config');
+const logger = require('../utils/logger');
+const { SignatureMismatchError } = require('../utils/errors');
+
 const createPayment = async (paymentDetails) => {
   // Mock implementation
   return {
@@ -8,7 +13,21 @@ const createPayment = async (paymentDetails) => {
 };
 
 const verifyPaytmSignature = async (payload, signature) => {
-  // Mock implementation
+  const body = JSON.stringify(payload);
+  const expectedSignature = crypto
+    .createHmac('sha256', config.paytm.merchantKey)
+    .update(body)
+    .digest('hex');
+
+  if (expectedSignature !== signature) {
+    logger.error('Paytm signature mismatch', {
+      receivedSignature: signature,
+      expectedSignature,
+      payload,
+    });
+    throw new SignatureMismatchError('Invalid Paytm signature');
+  }
+
   return true;
 };
 
