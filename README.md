@@ -5,12 +5,14 @@ A robust Node.js Express service for handling payments via Paytm and SMS notific
 ## Features
 
 - 🔐 **Payment Integration**: Paytm payment gateway integration with webhook handling
+- 🔒 **Enhanced Security**: HMAC-SHA256 signature verification with typed errors
+- 🔑 **Idempotency**: Duplicate webhook prevention with automatic key extraction
 - 📱 **SMS Notifications**: SMS notification service for payment updates
 - 🏥 **Health Monitoring**: Health check endpoint for service monitoring
-- 📊 **Structured Logging**: Winston-based logging with file and console outputs
+- 📊 **Structured Logging**: Winston-based logging with comprehensive security context
 - ⚙️ **Environment-driven Configuration**: Secure config management with .env
-- 🛡️ **Security**: Helmet.js for security headers, signature verification
-- ✅ **Comprehensive Testing**: Full test coverage with Jest and Supertest
+- 🛡️ **Security**: Helmet.js, constant-time comparison, typed error handling
+- ✅ **Comprehensive Testing**: Full test coverage with Jest and Supertest (90+ tests)
 - 🎭 **Mock Integration**: Mock APIs for development and testing
 
 ## Project Structure
@@ -20,21 +22,27 @@ Pegasus2.0/
 ├── src/
 │   ├── config/
 │   │   └── config.js              # Environment configuration
+│   ├── errors/
+│   │   └── PaymentErrors.js       # Custom typed error classes
 │   ├── routes/
-│   │   ├── paymentRoutes.js       # Payment API routes
+│   │   ├── paymentRoutes.js       # Payment API routes with idempotency
 │   │   └── notificationRoutes.js  # Notification API routes
 │   ├── services/
 │   │   ├── paymentService.js      # Payment business logic
 │   │   └── notificationService.js # Notification business logic
 │   ├── utils/
-│   │   └── logger.js              # Structured logging utility
+│   │   ├── logger.js              # Structured logging utility
+│   │   └── idempotency.js         # Idempotency key management
 │   └── server.js                  # Express server setup
 ├── __tests__/
 │   ├── paymentService.test.js     # Payment service tests
 │   ├── notificationService.test.js # Notification service tests
+│   ├── signatureVerification.test.js # Signature verification tests
+│   ├── idempotency.test.js        # Idempotency tests
 │   └── api.test.js                # API integration tests
 ├── logs/                          # Log files (auto-generated)
 ├── .env.example                   # Environment variables template
+├── SECURITY_FEATURES.md           # Security documentation
 ├── package.json
 └── README.md
 ```
@@ -302,8 +310,8 @@ Retrieve all notifications (for testing purposes).
 ### Payment Service
 
 - `createPayment(paymentData)` - Create a new payment
-- `verifyPaytmSignature(params, checksum)` - Verify Paytm signature
-- `handlePaymentWebhook(webhookData)` - Process payment webhooks
+- `verifyPaytmSignature(params, checksum, securityContext)` - **Enhanced** HMAC-SHA256 signature verification with security logging
+- `handlePaymentWebhook(webhookData, securityContext, idempotencyKey)` - **Enhanced** Process payment webhooks with idempotency
 - `updatePaymentStatus(orderId, updateData)` - Update payment status
 - `getPaymentById(orderId)` - Retrieve payment by ID
 
@@ -312,6 +320,21 @@ Retrieve all notifications (for testing purposes).
 - `sendSMSNotification(smsData)` - Send SMS notification
 - `sendPaymentNotification(paymentData)` - Send payment notification SMS
 - `getNotificationById(notificationId)` - Retrieve notification by ID
+
+### Security & Idempotency
+
+- `extractIdempotencyKey(req, body)` - Extract idempotency key from headers/body
+- `checkIdempotencyKey(key)` - Check if request has been processed
+- `storeIdempotencyKey(key, data, status)` - Store response for duplicate prevention
+
+### Error Classes
+
+- `SignatureVerificationError` - Signature verification failed (401)
+- `InvalidChecksumError` - Invalid checksum format (401)
+- `PaymentNotFoundError` - Payment not found (404)
+- `InvalidPaymentDataError` - Invalid payment data (400)
+- `WebhookValidationError` - Webhook validation failed (400)
+- `DuplicateWebhookError` - Duplicate webhook detected (409)
 
 ## Logging
 
@@ -326,26 +349,38 @@ The service uses Winston for structured logging with the following features:
 
 ## Testing
 
-The project includes comprehensive test coverage:
+The project includes comprehensive test coverage with **90+ test cases**:
 
 - **Payment Service Tests**: Test all payment functions with mock data
+- **Signature Verification Tests**: Test HMAC validation, typed errors, security context
+- **Idempotency Tests**: Test duplicate detection, key extraction, caching
 - **Notification Service Tests**: Test SMS sending and notifications
 - **API Integration Tests**: End-to-end API testing with Supertest
 
 Test coverage includes:
 - ✅ Success scenarios
-- ✅ Error handling
+- ✅ Error handling and typed errors
 - ✅ Input validation
+- ✅ Security context logging
+- ✅ Idempotency and duplicate prevention
 - ✅ Edge cases
 - ✅ Mock API responses
+- ✅ Timing attack prevention
 
 ## Security Features
 
+- **Enhanced Signature Verification**: HMAC-SHA256 with constant-time comparison
+- **Typed Error Handling**: Structured security errors with context
+- **Security Context Logging**: Comprehensive audit trail with IP, User-Agent, timestamps
+- **Idempotency Protection**: Prevents duplicate webhook processing
+- **Automatic Key Extraction**: From headers (x-idempotency-key, x-request-id) or body
+- **Response Caching**: 24-hour TTL for duplicate detection
 - **Helmet.js**: Secure HTTP headers
 - **CORS**: Cross-origin resource sharing enabled
-- **Signature Verification**: Paytm checksum validation
 - **Environment Variables**: Sensitive data stored securely
 - **Input Validation**: Request data validation
+
+📖 **See [SECURITY_FEATURES.md](SECURITY_FEATURES.md) for detailed security documentation**
 
 ## Mock Integrations
 
