@@ -2,6 +2,8 @@ const crypto = require('crypto');
 const config = require('../config/config');
 const logger = require('../utils/logger');
 const { SignatureMismatchError } = require('../utils/errors');
+const notificationService = require('./notificationService');
+const idempotencyStore = require('../utils/idempotencyStore');
 
 const createPayment = async (paymentDetails) => {
   // Mock implementation
@@ -31,9 +33,35 @@ const verifyPaytmSignature = async (payload, signature) => {
   return true;
 };
 
-const handlePaymentWebhook = async (webhookData) => {
-  // Mock implementation
-  console.log('Webhook received:', webhookData);
+const handlePaymentWebhook = async (webhookData, idempotencyKey) => {
+  logger.info('Webhook received', { idempotencyKey, payload: webhookData });
+
+  if (idempotencyKey && idempotencyStore.has(idempotencyKey)) {
+    logger.warn('Idempotent request already processed', { idempotencyKey });
+    return { status: 'Already processed' };
+  }
+
+  logger.info('Webhook validated', { idempotencyKey });
+
+  if (webhookData.STATUS === 'TXN_SUCCESS') {
+    await updatePaymentStatus(webhookData.ORDERID, 'SUCCESS');
+    // Assuming we have customer's phone number in the webhook payload
+    await notificationService.sendSMSNotification(
+      webhookData.MSISDN,
+      `Your payment of ${webhookData.TXNAMOUNT} was successful.`
+    );
+    logger.info('Payment successful, status updated and notification sent.', { idempotencyKey, orderId: webhookData.ORDERID });
+  } else {
+    await updatePaymentStatus(webhookData.ORDERID, 'FAILED');
+    logger.info('Payment failed, status updated.', { idempotencyKey, orderId: webhookData.ORDERID });
+  }
+  
+  if (idempotencyKey) {
+    idempotencyStore.add(idempotencyKey);
+  }
+
+  logger.info('Webhook applied', { idempotencyKey });
+
   return { success: true };
 };
 
@@ -54,6 +82,14 @@ const getPaymentById = async (paymentId) => {
     currency: 'INR',
     status: 'SUCCESS',
   };
+};
+
+const paymentService = {
+  createPayment,
+  verifyPaytmSignature,
+  handlePaymentWebhook,
+  updatePaymentStatus,
+  getPaymentById,
 };
 
 module.exports = {

@@ -20,7 +20,7 @@ const handleWebhook = async (req, res) => {
   try {
     const isValid = await paymentService.verifyPaytmSignature(req.body, signature);
     if (isValid) {
-      await paymentService.handlePaymentWebhook(req.body);
+      await paymentService.handlePaymentWebhook(req.body, idempotencyKey);
       res.status(200).send({ status: 'OK' });
     }
   } catch (error) {

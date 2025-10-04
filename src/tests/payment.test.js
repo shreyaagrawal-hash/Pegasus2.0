@@ -4,12 +4,20 @@ process.env.PAYTM_MERCHANT_ID = 'dummy_id';
 const request = require('supertest');
 const app = require('../app');
 const paymentService = require('../services/paymentService');
+const notificationService = require('../services/notificationService');
 const crypto = require('crypto');
 const config = require('../config/config');
+const idempotencyStore = require('../utils/idempotencyStore');
 
 jest.mock('../services/paymentService');
+jest.mock('../services/notificationService');
 
 describe('Payment Routes', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        idempotencyStore.clear();
+    });
+
     it('should create a payment', async () => {
         paymentService.createPayment.mockResolvedValue({ paymentId: '123' });
         const res = await request(app)
@@ -55,5 +63,18 @@ describe('Payment Routes', () => {
         
         expect(res.statusCode).toEqual(400);
         expect(res.body).toHaveProperty('error', 'Invalid Paytm signature');
+    });
+
+    it('should process successful payment webhook', async () => {
+        const body = { ORDERID: 'order123', STATUS: 'TXN_SUCCESS', TXNAMOUNT: '100', MSISDN: '1234567890' };
+        paymentService.verifyPaytmSignature.mockResolvedValue(true);
+        paymentService.handlePaymentWebhook.mockResolvedValue({ success: true });
+        paymentService.updatePaymentStatus.mockResolvedValue({ success: true }); // Mock dependency
+        
+        const res = await request(app)
+            .post('/api/payments/webhook')
+            .send(body);
+
+        expect(res.statusCode).toEqual(200);
     });
 });
